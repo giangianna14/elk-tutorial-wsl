@@ -1,0 +1,47 @@
+# =============== Filebeat inputs ===============
+filebeat.inputs:
+- type: log
+  enabled: true
+  paths:
+    - /home/giangianna/elk-tutorial/hands-on-elk-monitoring/log-generator/app.log
+  tags: ["app-log", "python-app"]
+  # fields:
+  #   app_name: my_python_app
+  # fields_under_root: true
+
+# =============== Filebeat autodiscover ===============
+# Filebeat Autodiscover (jika Anda menggunakan Docker atau Kubernetes)
+# filebeat.autodiscover:
+#   providers:
+#     - type: docker
+#       hints.enabled: true
+
+# ================== General ==================
+name: "wsl-filebeat-app" # Nama Filebeat instance ini
+# tags: ["my-filebeat-instance"]
+
+# ================== Outputs ==================
+
+# ---------------------------- Logstash output ----------------------------
+output.logstash:
+  hosts: ["localhost:5044"]
+  # Optional SSL. By default is off.
+  # ssl.certificate_authorities: ["/etc/pki/root/ca.pem"]
+  # ssl.certificate: "/etc/pki/client/cert.pem"
+  # ssl.key: "/etc/pki/client/cert.key"
+
+# ================== Logging ===================
+# logging.level: info
+# logging.to_files: true
+# logging.files:
+#   path: /var/log/filebeat
+#   name: filebeat
+#   keepfiles: 7
+#   permissions: 0644
+
+# ================= Processors =================
+# processors:
+#  - add_host_metadata: ~
+#  - add_cloud_metadata: ~
+#  - add_docker_metadata: ~
+#  - add_kubernetes_metadata: ~
