@@ -678,15 +678,845 @@ Metrik sangat baik untuk:
 Dengan metrik yang dikumpulkan dan divisualisasikan dengan benar, Anda mendapatkan wawasan penting tentang kinerja infrastruktur Anda, yang merupakan komponen kunci dari strategi observability yang komprehensif.
 
 ### Bagian 3: Application Performance Monitoring (APM)
-*(Konten akan ditambahkan di sini)*
+
+Application Performance Monitoring (APM) memberikan visibilitas mendalam ke dalam kinerja aplikasi Anda dengan melacak request, dependencies, database queries, dan bottlenecks. Elastic APM mengumpulkan traces yang detail dari aplikasi terdistribusi untuk membantu Anda memahami alur request dan mengidentifikasi masalah performa.
+
+**Tujuan Pembelajaran Bagian Ini:**
+*   Memahami konsep traces, spans, dan transactions dalam APM.
+*   Menginstal dan mengkonfigurasi APM Server.
+*   Menginstrumentasi aplikasi Python sederhana dengan Elastic APM Agent.
+*   Menganalisis traces dan performa aplikasi di Kibana APM UI.
+*   Use Case: Mengidentifikasi bottleneck performa dalam aplikasi.
+
+**Apa itu APM Traces?**
+
+APM traces memberikan gambaran lengkap tentang perjalanan request melalui sistem Anda:
+*   **Transaction**: Operasi tingkat tinggi seperti HTTP request atau background job.
+*   **Span**: Unit kerja dalam transaction, seperti database query atau external API call.
+*   **Service Map**: Visualisasi dependencies antar services.
+
+**Langkah-langkah Hands-on:**
+
+1.  **Instalasi APM Server** {#1-instalasi-apm-server}
+
+    APM Server menerima data APM dari agents dan mengirimkannya ke Elasticsearch.
+
+    *   **Unduh dan Instal APM Server**:
+        ```bash
+        curl -L -O https://artifacts.elastic.co/downloads/apm-server/apm-server-7.17.28-amd64.deb
+        sudo dpkg -i apm-server-7.17.28-amd64.deb
+        ```
+
+    *   **Konfigurasi APM Server (`/etc/apm-server/apm-server.yml`)**:
+        ```yaml
+        apm-server:
+          host: "localhost:8200"
+          
+        output.elasticsearch:
+          hosts: ["localhost:9200"]
+          
+        setup.kibana:
+          host: "localhost:5601"
+        ```
+
+    *   **Setup dan Start APM Server**:
+        ```bash
+        sudo apm-server setup -e
+        sudo systemctl start apm-server
+        sudo systemctl enable apm-server
+        sudo systemctl status apm-server --no-pager
+        ```
+
+2.  **Menginstrumentasi Aplikasi Python** {#2-menginstrumentasi-aplikasi-python}
+
+    Kita akan membuat aplikasi Python sederhana dengan Flask yang diinstrumentasi dengan Elastic APM.
+
+    *   **Instal Dependencies**:
+        ```bash
+        cd /home/giangianna/elk-tutorial-wsl/hands-on-elk-monitoring/
+        sudo apt-get install python3-pip -y
+        pip3 install flask elastic-apm[flask] requests
+        ```
+
+    *   **Buat Aplikasi Web Sederhana**:
+        Buat file `web-app/flask_app.py`:
+        ```python
+        from flask import Flask, jsonify, request
+        from elasticapm.contrib.flask import ElasticAPM
+        import requests
+        import time
+        import random
+        import logging
+
+        app = Flask(__name__)
+
+        # Konfigurasi Elastic APM
+        app.config['ELASTIC_APM'] = {
+            'SERVICE_NAME': 'python-web-app',
+            'SECRET_TOKEN': '',  # Kosong untuk development
+            'SERVER_URL': 'http://localhost:8200',
+            'ENVIRONMENT': 'development',
+        }
+
+        apm = ElasticAPM(app)
+
+        # Setup logging
+        logging.basicConfig(level=logging.INFO)
+        logger = logging.getLogger(__name__)
+
+        @app.route('/')
+        def home():
+            logger.info("Home endpoint accessed")
+            return jsonify({"message": "Hello from APM monitored Flask app!"})
+
+        @app.route('/slow')
+        def slow_endpoint():
+            """Endpoint yang lambat untuk demonstrasi APM"""
+            logger.info("Slow endpoint accessed")
+            
+            # Simulasi operasi lambat
+            time.sleep(random.uniform(1, 3))
+            
+            # Simulasi database query
+            simulate_database_query()
+            
+            return jsonify({"message": "This was a slow operation"})
+
+        @app.route('/error')
+        def error_endpoint():
+            """Endpoint yang menghasilkan error"""
+            logger.error("Error endpoint accessed - generating error")
+            raise Exception("This is a simulated error for APM testing")
+
+        @app.route('/external')
+        def external_call():
+            """Endpoint yang memanggil service eksternal"""
+            logger.info("External call endpoint accessed")
+            
+            try:
+                # Simulasi panggilan ke API eksternal
+                response = requests.get('https://httpbin.org/delay/1', timeout=5)
+                return jsonify({
+                    "external_response": response.json(),
+                    "status": "success"
+                })
+            except Exception as e:
+                logger.error(f"External call failed: {str(e)}")
+                return jsonify({"error": str(e)}), 500
+
+        def simulate_database_query():
+            """Simulasi database query untuk APM tracing"""
+            with apm.capture_span('database.query', span_type='db'):
+                # Simulasi waktu database query
+                time.sleep(random.uniform(0.1, 0.5))
+                logger.info("Database query executed")
+
+        if __name__ == '__main__':
+            app.run(host='0.0.0.0', port=5000, debug=True)
+        ```
+
+    *   **Jalankan Aplikasi Flask**:
+        ```bash
+        mkdir -p /home/giangianna/elk-tutorial-wsl/hands-on-elk-monitoring/web-app
+        cd /home/giangianna/elk-tutorial-wsl/hands-on-elk-monitoring/web-app
+        python3 flask_app.py
+        ```
+
+3.  **Generate Traffic untuk APM Data** {#3-generate-traffic-untuk-apm-data}
+
+    Buat script untuk menghasilkan traffic ke aplikasi:
+
+    *   **Buat Load Testing Script (`load_test.py`)**:
+        ```python
+        import requests
+        import time
+        import random
+        from concurrent.futures import ThreadPoolExecutor
+        import logging
+
+        logging.basicConfig(level=logging.INFO)
+        logger = logging.getLogger(__name__)
+
+        BASE_URL = "http://localhost:5000"
+
+        endpoints = [
+            "/",
+            "/slow", 
+            "/external",
+            "/error"  # Ini akan menghasilkan error traces
+        ]
+
+        def make_request(endpoint):
+            try:
+                url = f"{BASE_URL}{endpoint}"
+                response = requests.get(url, timeout=10)
+                logger.info(f"Request to {endpoint}: Status {response.status_code}")
+                return response.status_code
+            except Exception as e:
+                logger.error(f"Request to {endpoint} failed: {str(e)}")
+                return None
+
+        def generate_load():
+            with ThreadPoolExecutor(max_workers=3) as executor:
+                for _ in range(50):  # Generate 50 requests
+                    endpoint = random.choice(endpoints)
+                    executor.submit(make_request, endpoint)
+                    time.sleep(random.uniform(0.5, 2))  # Random delay
+
+        if __name__ == "__main__":
+            logger.info("Starting load test...")
+            generate_load()
+            logger.info("Load test completed")
+        ```
+
+    *   **Jalankan Load Test** (di terminal terpisah):
+        ```bash
+        cd /home/giangianna/elk-tutorial-wsl/hands-on-elk-monitoring/web-app
+        python3 load_test.py
+        ```
+
+4.  **Navigasi ke APM UI di Kibana** {#4-navigasi-ke-apm-ui-di-kibana}
+
+    *   Buka Kibana: **Observability > APM**.
+    *   Anda akan melihat service `python-web-app` dalam daftar services.
+
+5.  **Eksplorasi APM UI** {#5-eksplorasi-apm-ui}
+
+    *   **Services Overview**: 
+        *   Menampilkan daftar semua services yang monitored.
+        *   Metrics seperti Throughput (requests/minute), Response time, Error rate.
+        
+    *   **Service Details**:
+        *   Klik pada service `python-web-app`.
+        *   **Transactions**: Melihat semua HTTP endpoints dan performanya.
+        *   **Dependencies**: Service maps yang menunjukkan dependencies.
+        *   **Errors**: Daftar error yang terjadi dengan stack traces.
+        
+    *   **Transaction Details**:
+        *   Klik pada salah satu transaction (misalnya `GET /slow`).
+        *   **Trace Timeline**: Visualisasi spans dalam transaction.
+        *   **Metadata**: Headers, user info, custom data.
+
+6.  **Analisis Performa dan Troubleshooting** {#6-analisis-performa-dan-troubleshooting}
+
+    *   **Identifikasi Slow Transactions**:
+        *   Di halaman service, urutkan transactions berdasarkan response time.
+        *   Klik pada transaction yang lambat untuk melihat trace detail.
+        
+    *   **Analisis Error Traces**:
+        *   Buka tab "Errors" untuk melihat semua error.
+        *   Klik pada error untuk melihat full stack trace.
+        
+    *   **Service Map**:
+        *   Visualisasi dependencies antar services.
+        *   Menunjukkan external calls dan database connections.
+
+7.  **Use Case: Debugging Performance Issue** {#7-use-case-debugging-performance-issue}
+
+    *   **Skenario**: Endpoint `/slow` dilaporkan sangat lambat.
+    *   **Investigasi dengan APM**:
+        1. Buka APM UI dan pilih service `python-web-app`.
+        2. Lihat transaction `GET /slow` - perhatikan average response time.
+        3. Klik pada transaction untuk melihat sample traces.
+        4. Dalam trace timeline, identifikasi span mana yang paling lama:
+           - `time.sleep()` operations
+           - `database.query` span
+           - External HTTP calls
+        5. Gunakan informasi ini untuk optimasi code.
+
+**Troubleshooting APM:**
+
+*   **Tidak ada data APM**: Periksa APM Server status dan konfigurasi agent.
+*   **Missing spans**: Pastikan instrumentasi manual benar untuk custom operations.
+*   **High overhead**: Konfigurasikan sampling rate di APM agent untuk production.
 
 ### Bagian 4: Uptime Monitoring
-*(Konten akan ditambahkan di sini)*
+
+Uptime Monitoring membantu Anda memantau ketersediaan services, endpoints, dan infrastruktur dengan melakukan health checks secara berkala. Heartbeat adalah agent Elastic yang melakukan ping ke services Anda dan melaporkan status ketersediaannya.
+
+**Tujuan Pembelajaran Bagian Ini:**
+*   Memahami konsep uptime monitoring dan health checks.
+*   Mengonfigurasi Heartbeat untuk memonitor HTTP endpoints.
+*   Menggunakan Uptime UI di Kibana untuk melihat status ketersediaan.
+*   Membuat alerts untuk downtime detection.
+*   Use Case: Monitoring ketersediaan aplikasi web dan API.
+
+**Apa itu Uptime Monitoring?**
+
+Uptime monitoring melakukan checks berkala terhadap:
+*   **HTTP/HTTPS endpoints**: Memastikan web aplikasi dapat diakses.
+*   **TCP services**: Database, message queues, dll.
+*   **ICMP pings**: Basic network connectivity.
+
+**Langkah-langkah Hands-on:**
+
+1.  **Instalasi dan Konfigurasi Heartbeat** {#1-instalasi-dan-konfigurasi-heartbeat}
+
+    *   **Instal Heartbeat**:
+        ```bash
+        curl -L -O https://artifacts.elastic.co/downloads/beats/heartbeat/heartbeat-7.17.28-amd64.deb
+        sudo dpkg -i heartbeat-7.17.28-amd64.deb
+        ```
+
+    *   **Konfigurasi Heartbeat (`/etc/heartbeat/heartbeat.yml`)**:
+        ```yaml
+        #==================== Heartbeat monitors =====================
+        heartbeat.config.monitors:
+          path: ${path.config}/monitors.d/*.yml
+          reload.enabled: true
+          reload.period: 5s
+
+        heartbeat.monitors:
+        # Monitor Flask app
+        - type: http
+          id: flask-app-home
+          name: "Flask App Home"
+          urls: ["http://localhost:5000/"]
+          schedule: '@every 30s'
+          timeout: 10s
+          check.response.status: [200]
+          tags: ["web-app", "python", "critical"]
+
+        - type: http
+          id: flask-app-slow
+          name: "Flask App Slow Endpoint"
+          urls: ["http://localhost:5000/slow"]
+          schedule: '@every 1m'
+          timeout: 15s
+          check.response.status: [200]
+          tags: ["web-app", "python", "performance"]
+
+        # Monitor Kibana
+        - type: http
+          id: kibana-health
+          name: "Kibana Health"
+          urls: ["http://localhost:5601/api/status"]
+          schedule: '@every 1m'
+          timeout: 10s
+          check.response.status: [200]
+          tags: ["infrastructure", "kibana"]
+
+        # Monitor Elasticsearch
+        - type: http
+          id: elasticsearch-health
+          name: "Elasticsearch Health"
+          urls: ["http://localhost:9200/_cluster/health"]
+          schedule: '@every 1m'
+          timeout: 10s
+          check.response.status: [200]
+          check.response.body: ["green", "yellow"]
+          tags: ["infrastructure", "elasticsearch"]
+
+        # External service monitoring
+        - type: http
+          id: external-api
+          name: "External HTTP API"
+          urls: ["https://httpbin.org/status/200"]
+          schedule: '@every 2m'
+          timeout: 10s
+          check.response.status: [200]
+          tags: ["external", "api"]
+
+        # TCP monitoring example
+        - type: tcp
+          id: elasticsearch-tcp
+          name: "Elasticsearch TCP"
+          hosts: ["localhost:9200"]
+          schedule: '@every 1m'
+          timeout: 3s
+          tags: ["infrastructure", "tcp"]
+
+        #==================== Elasticsearch Output =====================
+        output.elasticsearch:
+          hosts: ["localhost:9200"]
+
+        #============================== Kibana =====================================
+        setup.kibana:
+          host: "localhost:5601"
+
+        #============================== Processors =====================================
+        processors:
+          - add_host_metadata:
+              when.not.contains.tags: forwarded
+        ```
+
+    *   **Setup dan Start Heartbeat**:
+        ```bash
+        sudo heartbeat setup -e
+        sudo systemctl start heartbeat
+        sudo systemctl enable heartbeat
+        sudo systemctl status heartbeat --no-pager
+        ```
+
+2.  **Navigasi ke Uptime UI di Kibana** {#2-navigasi-ke-uptime-ui-di-kibana}
+
+    *   Buka Kibana: **Observability > Uptime**.
+    *   Anda akan melihat dashboard dengan overview semua monitors.
+
+3.  **Eksplorasi Uptime UI** {#3-eksplorasi-uptime-ui}
+
+    *   **Overview Dashboard**:
+        *   **Up/Down Status**: Jumlah monitors yang up vs down.
+        *   **Monitor List**: Daftar semua monitors dengan status terkini.
+        *   **Snapshot Counts**: Histogram ketersediaan.
+        
+    *   **Monitor Details**:
+        *   Klik pada salah satu monitor untuk melihat detail.
+        *   **Ping History**: Timeline status checks.
+        *   **Monitor Duration**: Response time over time.
+        *   **Ping List**: Detail individual pings dengan response times.
+        
+    *   **Certificates**: 
+        *   Monitoring SSL certificate expiration.
+        *   Alerts untuk certificates yang akan expire.
+
+4.  **Simulasi Downtime untuk Testing** {#4-simulasi-downtime-untuk-testing}
+
+    *   **Hentikan Flask App** (untuk simulasi downtime):
+        ```bash
+        # Hentikan Flask app yang berjalan
+        # Ctrl+C di terminal tempat Flask app berjalan
+        ```
+        
+    *   **Tambah Monitor untuk Endpoint yang Tidak Ada**:
+        Buat file `/etc/heartbeat/monitors.d/test-down.yml`:
+        ```yaml
+        - type: http
+          id: non-existent-service
+          name: "Non-existent Service"
+          urls: ["http://localhost:9999/nonexistent"]
+          schedule: '@every 30s'
+          timeout: 5s
+          check.response.status: [200]
+          tags: ["test", "downtime"]
+        ```
+        
+    *   **Reload Heartbeat Configuration**:
+        ```bash
+        sudo systemctl reload heartbeat
+        ```
+
+5.  **Monitoring dan Alerting** {#5-monitoring-dan-alerting}
+
+    *   **Buat Uptime Alert Rule**:
+        1. Di Kibana, buka **Stack Management > Rules and Connectors**.
+        2. Klik **"Create rule"**.
+        3. Pilih rule type: **"Uptime monitor status"**.
+        4. **Configure conditions**:
+           - **Monitor status**: `down`
+           - **Location**: `any`
+           - **Number of monitors**: `1` or more
+           - **Time window**: `3 minutes`
+        5. **Add actions**: Server log atau index untuk notification.
+        6. **Save rule** dengan nama: `"Service Downtime Alert"`.
+
+    *   **Monitor Alert Status**:
+        - Generate downtime dengan menghentikan services.
+        - Periksa status alert di Rules dashboard.
+
+6.  **Use Case: Comprehensive Service Health Monitoring** {#6-use-case-comprehensive-service-health-monitoring}
+
+    *   **Skenario**: Monitoring kesehatan complete ELK stack dan aplikasi.
+    *   **Setup Monitoring**:
+        1. **Infrastructure Level**:
+           - Elasticsearch cluster health
+           - Kibana availability  
+           - Logstash (jika ada HTTP endpoint)
+           
+        2. **Application Level**:
+           - Critical business endpoints
+           - API response times
+           - Authentication services
+           
+        3. **External Dependencies**:
+           - Third-party APIs
+           - CDN endpoints
+           - Database connections
+
+    *   **Dashboard Creation**:
+        1. Buat dashboard kustom di Kibana.
+        2. Tambahkan visualizations untuk:
+           - Service availability percentage
+           - Response time trends
+           - Downtime incidents
+           - Geographic monitoring (jika multi-location)
+
+7.  **Advanced Uptime Configuration** {#7-advanced-uptime-configuration}
+
+    *   **Custom Response Validation**:
+        ```yaml
+        - type: http
+          id: api-health-check
+          name: "API Health Check"
+          urls: ["http://localhost:5000/health"]
+          schedule: '@every 30s'
+          check.response.status: [200]
+          check.response.headers:
+            content-type: "application/json"
+          check.response.body:
+            - "status.*ok"
+            - "database.*connected"
+          tags: ["api", "health-check"]
+        ```
+
+    *   **Multi-location Monitoring** (jika ada multiple Heartbeat instances):
+        ```yaml
+        name: "production-heartbeat-east"
+        tags: ["production", "us-east-1"]
+        ```
+
+**Troubleshooting Uptime:**
+
+*   **Missing uptime data**: Periksa Heartbeat service status dan network connectivity.
+*   **False positive downs**: Adjust timeout values dan check intervals.
+*   **SSL certificate warnings**: Ensure proper certificate validation settings.
+
+**Best Practices:**
+
+*   **Realistic check intervals**: Jangan terlalu frequent untuk avoid noise.
+*   **Meaningful tags**: Gunakan tags untuk grouping dan filtering.
+*   **Response validation**: Check tidak hanya status code tapi juga content.
+*   **Alert tuning**: Configure appropriate thresholds untuk minimize false alarms.
 
 ---
 ## 4. Menyatukan Semuanya: Observability yang Terkorelasi
-*(Konten akan ditambahkan di sini)*
+
+Kekuatan sejati observability terletak pada kemampuan untuk mengorelasikan data dari logs, metrics, APM traces, dan uptime monitoring untuk mendapatkan pemahaman holistik tentang sistem Anda. Dalam bagian ini, kita akan melihat bagaimana menggabungkan semua pilar observability untuk investigasi masalah yang efektif.
+
+### Skenario: Investigasi Performance Degradation
+
+**Situasi**: Pengguna melaporkan aplikasi web terasa lambat dan kadang-kadang timeout.
+
+### Langkah Investigasi Terkorelasi:
+
+#### 1. **Mulai dengan Uptime Monitoring**
+   
+   *   **Buka Observability > Uptime**
+   *   **Periksa Status Monitors**:
+       ```
+       Flask App Home: UP (tapi response time meningkat)
+       Flask App Slow Endpoint: DOWN/TIMEOUT (beberapa failures)
+       Elasticsearch Health: UP
+       Kibana Health: UP
+       ```
+   *   **Identifikasi Time Window**: Catat kapan response time mulai meningkat (misalnya, 14:30-15:00).
+
+#### 2. **Korelasi dengan APM Traces**
+
+   *   **Buka Observability > APM**
+   *   **Analisis Service Performance**:
+       ```
+       Service: python-web-app
+       - Response time: Meningkat dari 200ms → 3000ms
+       - Error rate: Meningkat dari 1% → 15%
+       - Throughput: Turun dari 50 rpm → 20 rpm
+       ```
+   *   **Deep Dive ke Transaction Details**:
+       - Klik transaction `GET /slow`
+       - Lihat trace timeline: database spans mengambil 80% total time
+       - Identifikasi bottleneck: `database.query` span consistently slow
+
+#### 3. **Investigasi Infrastructure Metrics**
+
+   *   **Buka Observability > Metrics**
+   *   **Analisis Host Performance** (time range: 14:30-15:00):
+       ```
+       CPU Usage: Normal (30-40%)
+       Memory Usage: High (85-95%) - POTENTIAL ISSUE
+       Disk I/O: Elevated (vysoká zápis activity)
+       Network: Normal
+       ```
+   *   **Periksa Process Details**:
+       - High memory usage dari process `elasticsearch`
+       - Disk I/O spikes korelasi dengan slow database queries
+
+#### 4. **Analisis Logs untuk Root Cause**
+
+   *   **Buka Observability > Logs**
+   *   **Filter berdasarkan time window**: 14:30-15:00
+   *   **Search query strategis**:
+       ```kql
+       log_level: ERROR OR log_level: WARN OR message: "timeout" OR message: "slow"
+       ```
+   *   **Findings**:
+       ```
+       14:32 ERROR: Database connection pool exhausted
+       14:35 WARN: Query execution time exceeded 5000ms
+       14:38 ERROR: OutOfMemoryError in application heap
+       ```
+
+#### 5. **Korelasi Timeline Events**
+
+   **Membuat Timeline Investigasi**:
+   
+   | Time  | Uptime | APM | Metrics | Logs |
+   |-------|--------|-----|---------|------|
+   | 14:30 | Response time ↗ | Transaction latency ↗ | Memory 85% | Connection pool warnings |
+   | 14:32 | Timeouts start | Error rate 10% | Memory 90% | Pool exhausted errors |
+   | 14:35 | Monitor DOWN | Error rate 15% | Memory 95% | Query timeout errors |
+   | 14:38 | Complete failure | Service unavailable | Disk I/O spike | OutOfMemory errors |
+
+### Workflow Korelasi Otomatis
+
+#### 1. **Menggunakan Kibana Lens untuk Cross-correlation**
+
+   *   **Buat Dashboard Gabungan**:
+       ```
+       Panel 1: Uptime response times (line chart)
+       Panel 2: APM transaction rate & errors (dual axis)
+       Panel 3: Infrastructure CPU/Memory (area chart) 
+       Panel 4: Log error counts (bar chart)
+       ```
+
+   *   **Sinkronisasi Time Picker**: Semua panels menggunakan time range yang sama.
+
+#### 2. **Alerting Strategy Terintegrasi**
+
+   *   **Multi-condition Alert Rules**:
+       ```yaml
+       Rule: "Application Performance Degradation"
+       Conditions:
+         - Uptime response time > 2000ms (1 minute)
+         - APM error rate > 5% (2 minutes)
+         - Memory usage > 90% (3 minutes)
+       Actions:
+         - Create incident in ticketing system
+         - Send Slack notification with links ke relevant dashboards
+       ```
+
+#### 3. **Investigating dengan Service Maps**
+
+   *   **APM Service Map** menunjukkan:
+       ```
+       Web App → Database: High latency, errors
+       Web App → External API: Normal
+       Web App → File System: Normal
+       ```
+   *   **Identifikasi dependency**: Database adalah bottleneck utama.
+
+### Advanced Correlation Techniques
+
+#### 1. **Custom Fields untuk Korelasi**
+
+   **Menambahkan correlation IDs di semua telemetry data**:
+
+   *   **Logs (Logstash config)**:
+       ```logstash
+       filter {
+         if [agent][name] == "wsl-filebeat-app" {
+           mutate {
+             add_field => { "service.name" => "python-web-app" }
+             add_field => { "service.environment" => "development" }
+           }
+         }
+       }
+       ```
+
+   *   **APM traces sudah termasuk** `service.name` dan `service.environment`.
+
+   *   **Metrics (Metricbeat config)**:
+       ```yaml
+       processors:
+         - add_fields:
+             target: service
+             fields:
+               name: "python-web-app"
+               environment: "development"
+       ```
+
+#### 2. **Cross-app Navigation di Kibana**
+
+   *   **Dari APM ke Logs**: Click "View logs" button di APM transaction detail.
+   *   **Dari Logs ke Metrics**: Filter berdasarkan `host.name` dan jump ke Infrastructure view.
+   *   **Dari Uptime ke APM**: Click monitor name untuk melihat corresponding APM service.
+
+#### 3. **Machine Learning untuk Anomaly Correlation**
+
+   *   **Enable ML jobs** untuk setiap data type:
+       ```
+       - Log rate anomaly detection
+       - APM latency anomaly detection  
+       - Infrastructure metric anomalies
+       - Uptime response time anomalies
+       ```
+
+   *   **Correlate anomalies** berdasarkan time windows yang overlapping.
+
+### Praktik Terbaik untuk Observability Terintegrasi
+
+#### 1. **Standardisasi Naming dan Tagging**
+
+   ```yaml
+   Standard Tags:
+     service.name: "consistent-service-names"
+     service.environment: "dev|staging|prod"
+     service.version: "1.2.3"
+     team: "backend|frontend|infrastructure"
+     criticality: "critical|high|medium|low"
+   ```
+
+#### 2. **Centralized Dashboards**
+
+   *   **Service Health Dashboard**: Kombinasi uptime, APM, key metrics per service.
+   *   **Infrastructure Overview**: Host metrics dengan overlay log error rates.
+   *   **Incident Response Dashboard**: Real-time view semua critical alerts.
+
+#### 3. **Runbooks Terintegrasi**
+
+   **Template investigasi**:
+   ```markdown
+   1. Check Uptime status dan response times
+   2. Review APM service overview untuk errors/latency
+   3. Correlate dengan infrastructure metrics
+   4. Search logs untuk error details dan root cause
+   5. Check service dependencies di service map
+   6. Escalate with correlated evidence
+   ```
+
+### Automation dan Intelligent Alerting
+
+#### 1. **Smart Alert Correlation**
+
+   ```yaml
+   Intelligent Alert Rule:
+     Trigger: Multiple related alerts dalam 5 menit
+     Conditions:
+       - Uptime monitor DOWN
+       - APM error rate spike  
+       - Infrastructure resource high
+     Action: 
+       - Group related alerts
+       - Auto-create correlation timeline
+       - Include suggested investigation steps
+   ```
+
+#### 2. **Automated Root Cause Suggestions**
+
+   Menggunakan ML dan pattern recognition untuk suggest kemungkinan root causes berdasarkan historical incident data.
+
+Dengan menggabungkan semua aspek observability ini, Anda dapat secara dramatis mengurangi Mean Time To Resolution (MTTR) dan meningkatkan kepercayaan sistem secara keseluruhan.
 
 ---
 ## 5. Kesimpulan
-*(Konten akan ditambahkan di sini)*
+
+Dalam tutorial hands-on ini, kita telah menjelajahi komprehensif menu Observability di Kibana dan memahami bagaimana menggabungkan keempat pilar observability untuk menciptakan strategi monitoring yang holistik dan efektif.
+
+### Ringkasan Pembelajaran
+
+#### **1. Logs - Foundation of Observability**
+*   **Implementasi**: Filebeat → Logstash → Elasticsearch pipeline untuk structured log processing
+*   **Key Skills**: 
+    - Konfigurasi log parsing dengan Grok patterns
+    - KQL queries untuk investigasi logs
+    - Real-time log streaming dan filtering
+    - Alert rules untuk critical log events
+*   **Use Cases**: Error investigation, audit trails, application debugging
+
+#### **2. Metrics - Infrastructure Health Monitoring**
+*   **Implementasi**: Metricbeat untuk system dan application metrics collection
+*   **Key Skills**:
+    - Infrastructure monitoring dengan CPU, memory, disk, network metrics
+    - Custom dashboard creation untuk performance trends
+    - Metrics exploration dan correlation analysis
+    - Capacity planning berdasarkan historical data
+*   **Use Cases**: Performance monitoring, resource planning, SLA compliance
+
+#### **3. APM - Application Performance Deep Dive**
+*   **Implementasi**: APM Server dengan Elastic APM agents untuk distributed tracing
+*   **Key Skills**:
+    - Transaction tracing dan span analysis
+    - Service dependency mapping
+    - Performance bottleneck identification
+    - Error tracking dengan full stack traces
+*   **Use Cases**: Application optimization, microservices debugging, user experience monitoring
+
+#### **4. Uptime - Service Availability Monitoring**
+*   **Implementasi**: Heartbeat untuk external dan internal service monitoring
+*   **Key Skills**:
+    - HTTP/TCP health checks configuration
+    - SSL certificate monitoring
+    - Multi-location availability tracking
+    - Downtime alerting dan incident response
+*   **Use Cases**: SLA monitoring, external dependency tracking, business continuity
+
+#### **5. Integrated Observability - The Complete Picture**
+*   **Korelasi Cross-platform**: Menghubungkan events dari semua telemetry sources
+*   **Intelligent Alerting**: Multi-condition alerts yang mengurangi noise
+*   **Root Cause Analysis**: Structured approach untuk incident investigation
+*   **Automation**: ML-powered anomaly detection dan automated correlation
+
+### Manfaat Strategis yang Dicapai
+
+#### **Operational Excellence**
+*   **Reduced MTTR**: Dari investigation manual yang memakan waktu jam menjadi menit dengan correlated data
+*   **Proactive Monitoring**: Deteksi masalah sebelum berdampak ke end users
+*   **Data-Driven Decisions**: Keputusan infrastruktur dan aplikasi berdasarkan real observability data
+
+#### **Team Collaboration**
+*   **Shared Visibility**: Developer, SRE, dan Operations teams menggunakan platform yang sama
+*   **Standardized Processes**: Consistent troubleshooting workflows dan runbooks
+*   **Knowledge Sharing**: Historical incident data menjadi pembelajaran untuk team
+
+#### **Business Impact**
+*   **Improved User Experience**: Faster issue resolution = better customer satisfaction
+*   **Cost Optimization**: Right-sizing infrastructure berdasarkan actual usage patterns
+*   **Risk Mitigation**: Early warning systems untuk potential business disruptions
+
+### Next Steps dan Recommendations
+
+#### **Immediate Actions**
+1. **Implement Basic Setup**: Start dengan logs dan metrics untuk critical applications
+2. **Establish Baselines**: Collect 2-4 weeks data untuk establish normal behavior patterns
+3. **Create Essential Dashboards**: Service health, infrastructure overview, error tracking
+4. **Setup Critical Alerts**: High-impact, low-noise alerts untuk immediate issues
+
+#### **Medium-term Improvements**
+1. **Expand APM Coverage**: Instrument semua critical applications dengan distributed tracing
+2. **Advanced Alerting**: Implement intelligent alerting dengan correlation rules
+3. **Automated Runbooks**: Create automated response untuk common incidents
+4. **Team Training**: Ensure semua team members comfortable dengan observability tools
+
+#### **Long-term Strategy**
+1. **ML Integration**: Leverage machine learning untuk predictive monitoring
+2. **Custom Solutions**: Develop domain-specific monitoring untuk unique business requirements
+3. **Cross-platform Integration**: Extend observability ke cloud services, third-party systems
+4. **Continuous Improvement**: Regular review dan optimization observability strategy
+
+### Technology Evolution Considerations
+
+#### **Elastic Stack Ecosystem**
+*   **Stay Current**: Regular updates untuk security patches dan new features
+*   **Cloud Migration**: Consider Elastic Cloud untuk managed services dan scalability
+*   **Integration Opportunities**: Explore integrations dengan CI/CD, ticketing systems, communication tools
+
+#### **Industry Best Practices**
+*   **OpenTelemetry**: Consider adoption untuk vendor-neutral observability
+*   **Site Reliability Engineering**: Implement SRE practices dengan observability sebagai foundation
+*   **DevOps Culture**: Observability sebagai integral part of development lifecycle
+
+### Final Thoughts
+
+Observability bukan hanya tentang tools dan technology - ini adalah cultural shift menuju data-driven operations dan proactive system management. Dengan foundation yang kuat di Elastic Stack Observability seperti yang telah kita pelajari, Anda memiliki platform yang powerful untuk:
+
+*   **Understand** sistem Anda di semua levels - dari business transactions sampai infrastructure details
+*   **Respond** quickly ke incidents dengan correlated data dan automated workflows  
+*   **Improve** continuously berdasarkan insights dari observability data
+*   **Scale** operasi Anda dengan confidence karena comprehensive monitoring coverage
+
+Ingatlah bahwa observability adalah journey, bukan destination. Mulai dengan basics, iterate berdasarkan pembelajaran, dan gradually build towards sophisticated monitoring dan alerting ecosystem yang truly supports business objectives Anda.
+
+**Happy Monitoring!** 🚀
+
+---
+
+### Resources dan Further Reading
+
+*   **Elastic Documentation**: [https://www.elastic.co/guide/](https://www.elastic.co/guide/)
+*   **OpenTelemetry**: [https://opentelemetry.io/](https://opentelemetry.io/)
+*   **SRE Book**: [https://sre.google/sre-book/](https://sre.google/sre-book/)
+*   **Monitoring Best Practices**: Community forums dan industry blogs
+*   **Elastic Community**: [https://discuss.elastic.co/](https://discuss.elastic.co/)
+
+### Acknowledgments
+
+Tutorial ini dikembangkan berdasarkan best practices dari komunitas Elastic Stack, SRE community, dan real-world implementation experiences. Terima kasih kepada semua kontributor dalam ecosystem observability yang telah membuat tools dan knowledge ini accessible untuk semua.

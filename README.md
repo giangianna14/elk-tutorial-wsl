@@ -404,3 +404,42 @@ Dari sini, Anda dapat mengeksplorasi lebih lanjut:
 - Menggunakan Elasticsearch Watcher (fitur berbayar) atau ElastAlert (open-source) untuk alerting yang lebih advanced jika versi gratis Kibana alerting kurang memadai untuk kebutuhan produksi.
 
 Semoga tutorial ini bermanfaat!
+
+## Uninstall ELK Stack
+
+Jika Anda ingin menghapus ELK Stack secara bersih dari WSL Ubuntu, gunakan script uninstall yang disediakan:
+
+### Cara Uninstall
+
+1. **Jalankan script uninstall:**
+   ```bash
+   chmod +x uninstall_elk_wsl.sh
+   ./uninstall_elk_wsl.sh
+   ```
+
+2. **Script akan melakukan:**
+   - Menghentikan dan mendisable semua service ELK (Elasticsearch, Logstash, Kibana, Filebeat)
+   - Menguninstall semua paket ELK dengan `apt-get remove --purge`
+   - Menghapus semua direktori konfigurasi (`/etc/elasticsearch`, `/etc/logstash`, dll)
+   - Menghapus semua direktori data (`/var/lib/elasticsearch`, `/var/lib/logstash`, dll)
+   - Menghapus semua direktori log (`/var/log/elasticsearch`, `/var/log/logstash`, dll)
+   - Menghapus user dan group ELK
+   - Menghapus repository Elastic dan GPG key
+   - Membersihkan apt cache
+
+3. **Verifikasi uninstall:**
+   Script akan otomatis memverifikasi bahwa:
+   - ✓ Semua paket ELK sudah diuninstall
+   - ✓ Tidak ada service ELK yang aktif
+   - ✓ Semua direktori ELK sudah dihapus
+
+### ⚠️ PERINGATAN
+- **Backup data penting** sebelum uninstall jika diperlukan
+- Uninstall akan menghapus **semua data** ELK termasuk indices Elasticsearch
+- Proses uninstall **tidak dapat dibatalkan**
+
+### Reinstall
+Setelah uninstall, Anda dapat menginstall ulang ELK Stack dengan menjalankan:
+```bash
+./install_elk_v7.17.28_wsl.sh
+```
