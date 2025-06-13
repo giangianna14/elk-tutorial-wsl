@@ -443,3 +443,85 @@ Setelah uninstall, Anda dapat menginstall ulang ELK Stack dengan menjalankan:
 ```bash
 ./install_elk_v7.17.28_wsl.sh
 ```
+
+## Instalasi ELK Stack
+
+### Pilihan Versi ELK Stack
+
+Project ini menyediakan dua script instalasi untuk versi ELK Stack yang berbeda:
+
+#### 🔧 ELK Stack v7.17.28 (Stable & Lightweight)
+```bash
+chmod +x install_elk_v7.17.28_wsl.sh
+./install_elk_v7.17.28_wsl.sh
+```
+
+**Cocok untuk:**
+- Tutorial dan pembelajaran ELK Stack
+- Resource terbatas (RAM < 4GB)
+- Setup cepat development environment
+- Kompatibilitas dengan sistem lama
+
+#### 🚀 ELK Stack v8.15.0 (Latest & Modern)
+```bash
+chmod +x install_elk_v8_latest_wsl.sh
+./install_elk_v8_latest_wsl.sh
+```
+
+**Cocok untuk:**
+- Production environment
+- Resource memadai (RAM >= 4GB)
+- Fitur security modern
+- Advanced observability features (Fleet, enhanced ML, dll)
+
+#### 📊 Perbandingan Versi
+```bash
+./compare_elk_versions.sh
+```
+
+### Fitur Script v8 (Terbaru)
+
+#### ✨ **Enhanced Features:**
+- **Complete Stack**: Elasticsearch, Kibana, Logstash, APM Server, dan semua Beats
+- **Modern Security**: Built-in security (disabled untuk development)
+- **Optimized Config**: Konfigurasi modern untuk performa optimal
+- **Auto Dashboard Setup**: Otomatis setup index templates dan dashboards
+- **Fleet Ready**: Siap untuk centralized agent management
+- **Comprehensive Health Checks**: Verifikasi lengkap semua komponen
+
+#### 🔧 **Components Installed:**
+- **Elasticsearch 8.15.0**: Modern search engine dengan enhanced security
+- **Kibana 8.15.0**: Advanced data visualization dengan improved UI
+- **Logstash 8.15.0**: Data processing pipeline dengan better performance
+- **APM Server 8.15.0**: Application performance monitoring
+- **Filebeat 8.15.0**: Log shipping dengan enhanced modules
+- **Metricbeat 8.15.0**: System metrics collection
+- **Heartbeat 8.15.0**: Uptime monitoring dengan synthetic capabilities
+
+#### ⚙️ **Configuration Highlights:**
+```yaml
+# Modern Elasticsearch config
+cluster.name: elk-tutorial-cluster
+discovery.type: single-node
+xpack.security.enabled: false  # Development only
+network.host: 0.0.0.0
+
+# Enhanced Kibana config  
+server.host: "0.0.0.0"
+xpack.security.enabled: false
+elasticsearch.hosts: ["http://localhost:9200"]
+
+# APM Server integration
+apm-server.host: "localhost:8200"
+```
+
+#### 🌐 **Access Points:**
+- **Kibana**: http://localhost:5601
+- **Elasticsearch**: http://localhost:9200
+- **APM Server**: http://localhost:8200
+
+#### 📈 **Resource Requirements:**
+- **Minimum RAM**: 4GB
+- **Recommended RAM**: 8GB+
+- **Disk Space**: ~5GB
+- **CPU**: 2+ cores
